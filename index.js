@@ -1,101 +1,102 @@
-import express from "express";
-import fetch from "node-fetch";
-import cheerio from "cheerio";
+const express = require('express');
+const axios = require('axios');
+const cheerio = require('cheerio');
 
 const app = express();
-app.use(express.static("public"));
-app.use(express.json());
-
 const PORT = process.env.PORT || 3000;
 const BASE = "https://vegamovies.bh";
 
-// /search?q=movie name  -> returns array of {title, link}
-app.get("/search", async (req, res) => {
+app.use(express.static('public'));
+app.use(express.json());
+
+// Search endpoint: /search?q=movie name
+app.get('/search', async (req, res) => {
   const q = req.query.q;
   if (!q) return res.status(400).json({ ok:false, error: "Missing q parameter" });
   try {
     const searchUrl = `${BASE}/?s=${encodeURIComponent(q)}`;
-    const r = await fetch(searchUrl, { headers: { "user-agent": "Mozilla/5.0" } });
-    const html = await r.text();
+    const response = await axios.get(searchUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
+    const html = response.data;
     const $ = cheerio.load(html);
     const results = [];
 
-    // Try several common selectors to collect matching entries
     $("article a, .post-title a, .entry-title a, .title a, .movie-title a").each((i, el) => {
-      try {
-        const href = $(el).attr("href");
-        const title = $(el).text().trim();
-        if (href && title) {
-          const link = href.startsWith("http") ? href : (new URL(href, BASE)).href;
-          results.push({ title, link });
-        }
-      } catch (e){}
+      const href = $(el).attr('href');
+      const title = $(el).text().trim();
+      if (href && title) {
+        const link = href.startsWith('http') ? href : new URL(href, BASE).href;
+        results.push({ title, link });
+      }
     });
 
-    // fallback: generic anchors that look like a movie link
-    if (results.length === 0) {
+    // fallback generic anchors
+    if(results.length === 0){
       $("a").each((i, el) => {
-        const href = $(el).attr("href") || "";
+        const href = $(el).attr('href') || "";
         const txt = $(el).text().trim();
-        if (href.includes("/movie") || href.includes("/movies") || href.includes("/watch") || txt.length>2) {
-          const link = href.startsWith("http") ? href : (new URL(href, BASE)).href;
-          results.push({ title: txt || link, link });
+        if(href.includes("/movie") || href.includes("/movies") || href.includes("/watch") || txt.length > 2){
+          const link = href.startsWith('http') ? href : new URL(href, BASE).href;
+          results.push({title: txt || link, link});
         }
       });
     }
 
-    // dedupe and return
+    // dedupe
     const seen = new Set();
     const unique = [];
-    for (const ritem of results) {
-      if (ritem && ritem.link && !seen.has(ritem.link)) {
-        seen.add(ritem.link);
-        unique.push(ritem);
+    for(const r of results){
+      if(r.link && !seen.has(r.link)){
+        seen.add(r.link);
+        unique.push(r);
       }
     }
 
     res.json({ ok: true, query: q, count: unique.length, results: unique });
-  } catch (err) {
+  } catch(err){
     res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// /extract?url=<movie page> -> returns iframe (if any) and direct media links found
-app.get("/extract", async (req, res) => {
+// Extract endpoint: /extract?url=<movie page url>
+app.get('/extract', async (req, res) => {
   const page = req.query.url;
-  if (!page) return res.status(400).json({ ok:false, error: "Missing url parameter" });
+  if(!page) return res.status(400).json({ ok:false, error: "Missing url parameter" });
   try {
-    const r = await fetch(page, { headers: { "user-agent": "Mozilla/5.0", "referer": BASE } });
-    const html = await r.text();
+    const response = await axios.get(page, {
+      headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': BASE }
+    });
+    const html = response.data;
     const $ = cheerio.load(html);
 
-    // find iframe url (first)
-    const iframe = $("iframe").first().attr("src") || null;
+    const iframeSrc = $("iframe").first().attr("src") || null;
     let iframeHtml = "";
-    if (iframe) {
-      let iframeUrl = iframe.startsWith("//") ? "https:" + iframe : (iframe.startsWith("http") ? iframe : new URL(iframe, page).href);
+    if(iframeSrc){
+      let iframeUrl = iframeSrc.startsWith("//") ? "https:" + iframeSrc : (iframeSrc.startsWith("http") ? iframeSrc : new URL(iframeSrc, page).href);
       try {
-        const rf = await fetch(iframeUrl, { headers: { "user-agent": "Mozilla/5.0", "referer": page } });
-        iframeHtml = await rf.text();
-      } catch (e) {
+        const iframeRes = await axios.get(iframeUrl, {
+          headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': page }
+        });
+        iframeHtml = iframeRes.data;
+      } catch(e){
         iframeHtml = "";
       }
     }
 
-    // combine text to search
-    const searchText = html + "\n" + iframeHtml;
+    const combinedText = html + "\n" + iframeHtml;
 
-    // regex for common media urls (m3u8/mp4/mkv/webm/avi/ts + optional query)
+    // regex for media files
     const regex = /https?:\/\/[^\s"'<>]+?\.(?:m3u8|mp4|mkv|webm|avi|ts)(?:\?[^"'<>\s]*)?/ig;
-    const matches = Array.from(new Set([...(searchText.match(regex) || [])]));
+    const matches = Array.from(new Set((combinedText.match(regex) || [])));
 
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.json({ ok: true, page, iframe: iframe || null, links: matches });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    res.json({ ok:true, page, iframe: iframeSrc, links: matches });
+  } catch(err){
+    res.status(500).json({ ok:false, error: err.message });
   }
 });
 
-app.listen(PORT, "0.0.0.0", () => {
+app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
