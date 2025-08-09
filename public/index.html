@@ -1,0 +1,74 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Vegamovies — Search & Play</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#fff;padding:20px;text-align:center}
+  input{width:80%;padding:10px;border-radius:6px;border:1px solid #444;margin:8px 0}
+  button{padding:10px 14px;border-radius:6px;background:#28a745;color:#fff;border:none;cursor:pointer}
+  .box{background:#222;padding:12px;border-radius:8px;margin-top:12px;text-align:left;max-width:900px;margin-left:auto;margin-right:auto}
+  a{color:#0af;word-break:break-all}
+</style>
+</head>
+<body>
+  <h1>Vegamovies — Search & Play</h1>
+  <input id="q" placeholder="Enter movie name" />
+  <button onclick="doSearch()">Search</button>
+  <div id="out" class="box"></div>
+
+<script>
+const API_BASE = ""; // keep empty to use same host (when deployed). Or set to full API URL if hosted separately.
+
+function api(path){ return (API_BASE || location.origin) + path; }
+
+async function doSearch(){
+  const q = document.getElementById('q').value.trim();
+  const out = document.getElementById('out');
+  if(!q) return out.innerText = 'Enter a movie name';
+  out.innerText = 'Searching...';
+  try{
+    const res = await fetch(api('/search?q=' + encodeURIComponent(q)));
+    const j = await res.json();
+    if(!j.ok){ out.innerText = 'Error: ' + (j.error || 'unknown'); return; }
+    if(!j.results || j.results.length===0){ out.innerText = 'No results'; return; }
+    out.innerHTML = '';
+    j.results.forEach(r => {
+      const d = document.createElement('div');
+      d.style.marginBottom='10px';
+      d.innerHTML = `<strong>${r.title}</strong><br><a href="#" onclick="extract(event,'${encodeURIComponent(r.link)}')">${r.link}</a>`;
+      out.appendChild(d);
+    });
+  }catch(e){
+    out.innerText = 'Failed: ' + e.message;
+  }
+}
+
+async function extract(e, linkEnc){
+  e.preventDefault();
+  const out = document.getElementById('out');
+  const link = decodeURIComponent(linkEnc);
+  out.innerText = 'Fetching media links...';
+  try{
+    const res = await fetch(api('/extract?url=' + encodeURIComponent(link)));
+    const j = await res.json();
+    if(!j.ok){ out.innerText = 'Error: ' + (j.error || 'unknown'); return; }
+    out.innerHTML = '<h3>Direct Links</h3>';
+    if(j.iframe){ out.innerHTML += '<div>Iframe: <a href="'+j.iframe+'" target="_blank">'+j.iframe+'</a></div>'; }
+    if(j.links && j.links.length){
+      j.links.forEach(l => {
+        const a = document.createElement('a'); a.href = l; a.target='_blank'; a.innerText = l;
+        const btn = document.createElement('button'); btn.innerText='Play'; btn.style.marginLeft='8px';
+        btn.onclick=(ev)=>{ ev.preventDefault(); window.open(l,'_blank'); };
+        const row = document.createElement('div'); row.style.marginBottom='8px'; row.appendChild(a); row.appendChild(btn);
+        out.appendChild(row);
+      });
+    } else {
+      out.innerHTML += '<div>No direct media links found.</div>';
+    }
+  }catch(e){ out.innerText = 'Failed: ' + e.message; }
+}
+</script>
+</body>
+  </html>
